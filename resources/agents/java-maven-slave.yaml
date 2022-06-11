@@ -1,7 +1,6 @@
 kind: Pod
 metadata:
   name: java-maven
-  namespace: jenkins
 spec:
   containers:
     - name: jnlp
