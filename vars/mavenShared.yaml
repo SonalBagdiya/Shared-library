@@ -3,28 +3,19 @@
     agent none
 
     stages {
-        stage('Read Properties') {
-            agent any
-
-            steps {
-                script {
-                    properties = readYaml file: "./properties.yaml"
-                }
-            }
-        }
-
         stage('Compile Application') {
             agent {
                 kubernetes {
-                    yamlFile "${properties.JAVA_MAVEN_SLAVE_YAML}"
+		    label "Jenkins-${env.JOB_NAME}"
+                    yaml libraryResource('agents/java-maven-slave.yaml')
                 }
             }
 
             steps {
                 container('jnlp') {
                     script {
-                        configFileProvider([configFile(fileId: 'custom-maven-settings', variable: 'MAVEN_SETTINGS_XML')]) {
-                            // executeMavenGoal("${MAVEN_SETTINGS_XML}", 'compile')
+			 sh 'mvn -version'
+                         sh "echo testing"
                         }
                     }
                 }
