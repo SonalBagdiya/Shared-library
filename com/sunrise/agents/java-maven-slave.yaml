@@ -1,0 +1,23 @@
+kind: Pod
+metadata:
+  name: java-maven
+  namespace: jenkins
+spec:
+  containers:
+    - name: jnlp
+      image: jnlp-agent-maven:latest
+      imagePullPolicy: IfNotPresent
+      # command:
+      #   - sleep
+      args:
+        - "${computer.jnlpmac}"
+        - "${computer.name}"
+      resources:
+        limits:
+          cpu: 300m
+          memory: 1Gi
+        requests:
+          cpu: 100m
+          memory: 512Mi   
+  imagePullSecrets:
+    - name: jenkins-admin              

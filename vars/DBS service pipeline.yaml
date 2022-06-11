@@ -1,0 +1,336 @@
+ def getMetrics(isReleaseBranch, capability, branch){
+     if(isReleaseBranch){
+         try {
+             sh 'wget https://nexus.aib.pri/nexus/service/local/repositories/releases/content/ie/aib/dbbe/dbb-security-test/1.0.11/dbb-security-test-1.0.11.jar'
+             sh "java -jar dbb-security-test-1.0.11.jar ${capability} ${branch}"
+         } catch (Exception prepareException) {
+             println "Error running metrics " + prepareException
+         }
+     }
+ }
+ 
+ def updateVersion() {
+     if (performRelease.contains('false')) {
+         String message = "new version commit"
+         def currentVersion = gradleUtils.getArtifact().get("version")
+         def version = versioningUtils.getDbsVersion(performRelease.toBoolean())
+         if (currentVersion != version) {
+             versioningUtils.updateVersion(version)
+             message = "Updating version ${version}"
+         }
+         gitUtils.commitAllChanges(env.BRANCH_NAME, message)
+     }
+ }
+ 
+ def setRemoteOrigin(String gitRepo, String branch) {
+     sh "git checkout ${branch}"
+     if (!gitRepo.contains('@')) {
+         sh "git remote set-url origin https://\${GIT_CREDENTIALS_USR}:\${GIT_CREDENTIALS_PSW}@" + gitRepo.replace('https://', '')
+     }
+     sh """
+             git config user.email ${GIT_CREDENTIALS_USR}@aib.ie
+             git config user.name ${GIT_CREDENTIALS_USR}
+        """
+ }
+ 
+ 
+ def skipValidation() {
+     return ignoreValidation.contains('true') || env.IGNORE_DEPLOYMENT_VALDATION ?: false
+ }
+ 
+ def call(Map buildopts = [:]) {
+     pipeline {
+         agent { label 'maven-3.6.3-openjdk11' }
+ 
+         parameters {
+             booleanParam(name: 'PERFORM_RELEASE', defaultValue: false, description: 'Used by CI team to create release candidate')
+             choice(choices: (env.TASKS) ?: 'all', description: 'Please select apps to build', name: 'APP')
+             booleanParam(name: 'UPLOAD_ARTIFACTS', defaultValue: false, description: 'Used to upload PR pipeline artifacts to nexus')
+             booleanParam(name: 'DEPENDENCY_SECURITY_CHECK', defaultValue: false, description: 'Used to enable dependency and security check stages')
+         }
+ 
+         options {
+             timestamps()
+             disableConcurrentBuilds()
+             skipDefaultCheckout false
+             buildDiscarder(logRotator(
+                     artifactDaysToKeepStr: '0',
+                     artifactNumToKeepStr: '0',
+                     daysToKeepStr: '5',
+                     numToKeepStr: '5')
+             )
+         }
+ 
+         environment {
+             CREDENTIALS_ID = 'IBBR_builduser'
+             GIT_CREDENTIALS = credentials("${env.CREDENTIALS_ID}")
+             NEXUS_CREDENTIALS_ID = 'nexus-deployment-credential'
+             NEXUS_CREDENTIALS = credentials("${env.NEXUS_CREDENTIALS_ID}")
+             GRADLE_OPTS = "-Djavax.net.ssl.trustStore=/root/cacerts_withAIB.jks -Djavax.net.ssl.trustStorePassword=changeit -Dhttp.proxyHost=webproxy.ad.aib.pri -Dhttp.proxyPort=8080 -Dhttps.proxyHost=webproxy.ad.aib.pri -Dhttps.proxyPort=8080 -Dhttp.nonProxyHosts='nexus.aib.pri|*.aib.pri|*.aibtest.ie|10.*|192.*'"
+             java_home = "$build_java"
+             PATH = "$build_java/bin:$PATH"
+             JAVA_OPTS = "-Xmx4096M -Djavax.net.ssl.trustStore=/root/cacerts_withAIB.jks -Djavax.net.ssl.trustStorePassword=changeit"
+         }
+ 
+         stages {
+             stage('prep') {
+                 steps {
+                     script {
+ 
+                         sh "java -version"
+                         app = 'all'
+                         try {
+                             app = APP
+                         } catch (propertyError) {
+                         }
+                         performRelease = 'false'
+                         try {
+                             performRelease = PERFORM_RELEASE
+                         } catch (propertyError) {
+                         }
+ 
+                         uploadArtifacts = 'false'
+                         try {
+                             uploadArtifacts = UPLOAD_ARTIFACTS
+                         } catch (propertyError) {
+                         }
+                         dependencySecurityCheck = 'false'
+                         try {
+                             dependencySecurityCheck = DEPENDENCY_SECURITY_CHECK
+                         } catch (propertyError) {
+                         }
+                         upStreamTrigger = false
+                         def upStreamCause = currentBuild.getBuildCauses('hudson.model.Cause$UpstreamCause')
+                         if(upStreamCause){
+                             upStreamTrigger = true
+                         }
+                         branch = env.BRANCH_NAME
+                         IGNORE_SONAR_RESULTS = false
+                         QUALITY_GATE = "DBBE-Quality-Gate"
+ 
+                         // Below apps list is needed for to execute publish reports
+                         apps = sh(script: 'ls -1 source/ | grep -v @tmp', returnStdout: true).split() as List
+                         apps.removeAll { it == 'pom.xml' }
+ 
+                         new ie.aib.CommonUtils().prepareMavenSettingsXml()
+                         sonar = new ie.aib.SonarQubeUtils()
+                         notification = new ie.aib.NotificationUtils()
+                         reportUtils = new ie.aib.ReportUtils()
+                         commonUtils = new ie.aib.CommonUtils()
+                         mavenUtils = new ie.aib.MavenUtils()
+                         gradleUtils = new ie.aib.GradleUtils()
+                         scopeUtils = new ie.aib.ScopeUtils()
+                         gitUtils = new ie.aib.GitUtils()
+                         versioningUtils = new ie.aib.VersioningUtils()
+                         buildUtils = new ie.aib.BuildUtils()
+                         unitIntTests = new ie.aib.UITUtils()
+ 
+                         gitRepo = gitUtils.gitRepo()
+                         repoName = gitRepo.replaceAll("https://gitstash.aib.pri/scm/DBBE/", "").replaceAll(".git", "")
+ 
+                         isReleaseBranch = commonUtils.releasableBranch(branch)
+                         if (performRelease.contains('false') && isReleaseBranch && versioningUtils.shouldUpdate()) {
+                             versioningUtils.updateBomVersion(repoName, branch)
+                         }
+ 
+                         runWithDebug = env.runWithDebug ?: false
+                         opts = commonUtils.getPipelineOpts(buildopts)
+                         println opts
+                         commonUtils.downloadKeys(opts.jks_path, opts.jks_pass)
+                     }
+ 
+                 }
+             }
+ 
+             stage('build') {
+                 steps {
+                     script {
+                         if (performRelease.contains('true') && isReleaseBranch) {
+                             sh "git checkout $branch" // De-Detach HEAD
+                         }
+                         additionalParams = ""
+                         if (runWithDebug) {
+                             additionalParams = "--debug"
+                         }
+ 
+                         sh """
+                             ./gradlew deploySecurity
+                         """
+ 
+                         apps.each { service ->
+                             try {
+                                 serviceDirectory = "source/${service}"
+ 
+                                 dir(serviceDirectory) {
+                                     if (fileExists("build.gradle")) {
+ 
+                                         sh """
+                                             ./gradlew compileJava --parallel
+                                         """
+ 
+                                         serviceProperties = commonUtils.loadServiceInfo()
+ 
+                                         unitIntTests.unitIntTests(opts, serviceProperties, false)
+ 
+                                         reportUtils.publishIndexHtml("build/reports/jacocoUnitTestHtml", service)
+                                         reportUtils.publishIndexHtml("build/reports/jacocoIntegrationTestHtml", service)
+ 
+                                     } else {
+                                         sh "mvn clean install ${additionalParams}"
+                                         println 'entering creation of reports'
+                                         junit '**/surefire-reports/*.xml'
+                                         junit '**/failsafe-reports/*.xml'
+ 
+                                         publishCoverage adapters: [[$class: 'JacocoReportAdapter', path: 'target/site/jacoco-ut/jacoco-ut.xml']]
+                                         publishCoverage adapters: [[$class: 'JacocoReportAdapter', path: 'target/site/jacoco-it/jacoco.xml']]
+ 
+ 
+                                         reportUtils.publishIndexHtml("target/site/jacoco-aggregate", service)
+ 
+                                     }
+                                 }
+                             } catch(error){
+                                 println 'errors during build ' + error
+                                 throw error
+                             }
+                         }
+ 
+                         try {
+                             serviceProperties = commonUtils.loadServiceInfo()
+                             env.execPattern = "**/jacoco-aggregate.exec,**/unitTest.exec,**/intTest.exec"
+                             env.exclusionPattern = env.jacocoExclusionPattern ?: serviceProperties.jacocoExclusionPattern
+                             env.inclusionPattern = env.jacocoInclusionPattern ?: ''
+                             new ie.aib.JacocoUtils().publishCoverageReport('40', '80')
+                         } catch(error){
+                             println 'errors during publish coverage report ' + error
+                         }
+ 
+                         if (isReleaseBranch || uploadArtifacts.contains('true')) {
+                             sh "./gradlew ${app} -Dstage=publish -DmvnInvokeratorrr=\"deploy -Dmaven.test.skip=true -s ${WORKSPACE}/settings.xml\" -DskipTests=true -Drelease=false -Dlocal=false -Dbranch=${branch} -Dnexus.user=$NEXUS_CREDENTIALS_USR -Dnexus.password=$NEXUS_CREDENTIALS_PSW"
+                         }
+                         if (isReleaseBranch) {
+                             updateVersion()
+                             sh './gradlew publish -Dnexus.user=$NEXUS_CREDENTIALS_USR -Dnexus.password=$NEXUS_CREDENTIALS_PSW'
+                         }
+                     }
+                 }
+             }
+
+     stage('Dependency Check') {
+         when { expression{ return dependencySecurityCheck.contains('true') || upStreamTrigger }}
+         steps {
+             script {
+                 dependencyCheck = new ie.aib.DependencyCheckUtils()
+                 dependencyCheckFailure = false
+                 reports = []
+ 
+                 apps.each { service ->
+                     dir("source/${service}") {
+                         try {
+                             reportName = "${service}-dependency-check"
+                             if (fileExists("build.gradle")) {
+                                 reportDir = "build/reports"
+                                 sh "${dependencyCheck.checkGradle()}"
+                             }
+                             if (fileExists("pom.xml")) {
+                                 reportDir = "target"
+                                 sh "${dependencyCheck.checkMaven()}"
+                             }
+                         } catch (error) {
+                             dependencyCheckFailure = true
+                             reports.add("${env.BUILD_URL}${reportName}/")
+                         } finally {
+                             reportUtils.publishHtml(reportDir, "dependency-check-report.html", reportName)
+                         }
+                     }
+                 }
+                 if (dependencyCheckFailure) {
+                     notification.sendNotificationBE("Dependency Check found issues with dependnecies for ${env.JOB_NAME}",
+                             "Please find dependency check reports at \n ${reports.join('\n')}")
+                 }
+                 if (dependencyCheckFailure && !dependencyCheck.getIgnoreResult()) {
+                     error "Dependency check failure"
+                 }
+             }
+         }
+     }
+     stage('Code Quality Check') {
+         steps {
+             script {
+                 sonarProps = "${sonar.getSonarLoginProps()} -Dsonar.analysis.mode=publish"
+                 if (BRANCH_NAME.contains('PR-')) {
+                     sonarProps = "${sonarProps} ${sonar.getSonarPrDecorationProps()}"
+                 }
+                 apps.each { service ->
+                     serviceDirectory = "source/${service}"
+                     dir(serviceDirectory) {
+                         sonar.sonarProjectAndQualityGateSetup()
+                     }
+                 }
+                 sh "./gradlew clean ${app} -DmvnInvokeratorrr=\"sonar:sonar ${sonarProps} -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco-aggregate/jacoco.xml\" -DskipTests=true -Dstage=sonar ${sonarProps} -Dsonar.junit.reportPaths=build/test-results/unitTest,build/test-results/intTest -Dsonar.coverage.jacoco.xmlReportPaths=build/reports/jacoco/test/jacocoUnitTestReport.xml,build/reports/jacoco/test/jacocoIntTestReport.xml"
+                 apps.each { service ->
+                     serviceDirectory = "source/${service}"
+                     dir(serviceDirectory) {
+                         sonar.sonarQualityBreaker(IGNORE_SONAR_RESULTS, 'pr_dbs')
+                     }
+                 }
+             }
+         }
+     }
+     stage('publish') {
+         when { expression { try { return performRelease.contains('true') && isReleaseBranch } catch (error) { return false } } }
+         steps {
+             sh "./gradlew ${app} -Dstage=publish -DmvnInvokeratorrr=\"deploy -Dskip.tests=true -s ${WORKSPACE}/settings.xml\" -Drelease=true -Dlocal=false -Dbranch=${branch} -Dnexus.user=$NEXUS_CREDENTIALS_USR -Dnexus.password=$NEXUS_CREDENTIALS_PSW"
+             setRemoteOrigin(gitRepo, branch)
+             sh 'git push --tags'
+         }
+     }
+     stage('Security Check') {
+         when { expression{ return dependencySecurityCheck.contains('true') || upStreamTrigger }}
+         steps {
+             script {
+                 try {
+                     sh './gradlew securityTest'
+                 } catch (error) {
+                     println "Unexpected error running security test: ${error}"
+                 } finally {
+                     step([$class: 'CucumberReportPublisher', jsonReportDirectory: 'build/cucumber-report', fileIncludePattern: '**/*.json'])
+ 
+                     reportPath = "build/reports/securityTests"
+                     reportUtils.publishIndexHtml(reportPath, "security")
+ 
+                     currentBuild.rawBuild.@result = hudson.model.Result.SUCCESS
+                 }
+             }
+         }
+     }
+     stage('release') {
+         when { expression { try { return performRelease.contains('true') && isReleaseBranch } catch (error) { return false } } }
+         steps {
+             script {
+                 def branch = env.BRANCH_NAME
+ 
+                 try {
+                     wrap([$class: 'BuildUser']) {
+                         version = sh(returnStdout: true, script: "cat gradle.properties | grep version | sed 's/version=//' | sed 's/-SNAPSHOT//'")
+                         currentBuild.displayName = "${version}"
+                         currentBuild.description = "Performed by ${env.BUILD_USER} ${env.BUILD_USER_EMAIL} from branch $branch"
+                     }
+                 } catch (ignoreSettingBuildNameError) {
+                     println "Setting build info failed due to $ignoreSettingBuildNameError"
+                 }
+                 println "Releasing from branch $branch"
+                 setRemoteOrigin(gitRepo, branch)
+                 sh './gradlew release -Prelease.useAutomaticVersion=true -Dnexus.user=$NEXUS_CREDENTIALS_USR -Dnexus.password=$NEXUS_CREDENTIALS_PSW -Drelease.from=' + branch
+             }
+         }
+     }
+ }
+  post {
+             always {
+                 deleteDir()
+                 getMetrics(isReleaseBranch, repoName, branch)
+             }
+         }
+     }
+ }

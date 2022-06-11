@@ -1,0 +1,43 @@
+ def call(Map buildopts = [:]) {
+     pipeline {
+         agent none
+ 
+       
+         stages {
+        
+        stage('Read Properties') {
+            agent any
+            steps {
+                script {
+                    properties = readYaml file: "./properties.yaml"
+                }
+            }
+        }
+        
+        stage('Compile Application') {
+            agent {
+                kubernetes {
+                    yamlFile "${properties.JAVA_MAVEN_SLAVE_YAML}"
+                }
+            }
+
+            steps {
+                container('jnlp') {
+                    script {
+                        sh "echo testing"
+                        }
+                    }
+                }
+            }    
+        }
+            
+     }
+ }
+  post {
+             always {
+                 deleteDir()
+                 getMetrics(isReleaseBranch, repoName, branch)
+             }
+         }
+     }
+ }
