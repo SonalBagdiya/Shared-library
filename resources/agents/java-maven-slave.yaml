@@ -4,7 +4,7 @@ metadata:
 spec:
   containers:
     - name: jnlp
-      image: infyartifactory.ad.infosys.com/devopscoe-docker/ose-jenkins-agent-maven:v4.5.0
+      image: jenkins/jnlp-agent-maven:latest
       imagePullPolicy: IfNotPresent
       # command:
       #   - sleep
@@ -19,4 +19,4 @@ spec:
           cpu: 100m
           memory: 512Mi   
   imagePullSecrets:
-    - name: cloud-agnostic-platform              
+    - name: jenkins-admin             

@@ -14,9 +14,10 @@
             steps {
                 container('jnlp') {
                     script {
-			configFileProvider([configFile(fileId: 'custom-maven-settings', variable: 'MAVEN_SETTINGS_XML')]) {
-			// sh 'mvn -version'
-                         sh "source /usr/local/bin/scl_enable && mvn -s ${MAVEN_SETTINGS_XML} -version"
+				echo "testing"
+			// configFileProvider([configFile(fileId: 'custom-maven-settings', variable: 'MAVEN_SETTINGS_XML')]) {
+			 sh 'mvn -version'
+                       //  sh "source /usr/local/bin/scl_enable && mvn -s ${MAVEN_SETTINGS_XML} -version"
 			  }
                         }
                     }
