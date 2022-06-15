@@ -4,7 +4,7 @@ metadata:
 spec:
   containers:
     - name: jnlp
-      image: jenkins/jnlp-agent-maven:latest
+      image: maven:alpine
       imagePullPolicy: IfNotPresent
       # command:
       #   - sleep
@@ -19,4 +19,4 @@ spec:
           cpu: 100m
           memory: 512Mi   
   imagePullSecrets:
-    - name: jenkins-admin             
+    - name: jenkins-cluster-admin             
