@@ -1,0 +1,20 @@
+kind: Pod
+metadata:
+  name: nodejs
+spec:
+  containers:
+    - name: nodejs
+      image: node:16.13.1-alpine3.14
+      imagePullPolicy: IfNotPresent    
+      args:
+        - "${computer.jnlpmac}"
+        - "${computer.name}"
+      resources:
+        limits:
+          cpu: 300m
+          memory: 1Gi
+        requests:
+          cpu: 100m
+          memory: 512Mi   
+  imagePullSecrets:
+    - name: jenkins-cluster-admin             
